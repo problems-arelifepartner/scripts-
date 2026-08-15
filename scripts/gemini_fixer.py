@@ -1,28 +1,40 @@
 import os
-import glob
 from google import genai
 
-# Initialize the Gemini client using environment variables
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+# Ensure the Gemini API key is configured
+if "GEMINI_API_KEY" not in os.environ:
+    print("Error: GEMINI_API_KEY environment variable is not set.")
+    exit(1)
 
-# Define file types for Gemini to scan
-EXTENSIONS = [".py", ".js", ".ts", ".json", ".sh", ".html", ".css", ".java", ".cpp"]
+# Initialize the Gemini client
+client = genai.Client()
+
+# Define file extensions to scan
+EXTENSIONS = {".py", ".js", ".ts", ".json", ".sh", ".html", ".css", ".java", ".cpp"}
 
 def get_code_files():
     code_files = []
-    for ext in EXTENSIONS:
-        code_files.extend(glob.glob(f"**/*{ext}", recursive=True))
-    
-    # Exclude virtual environments, dependencies, and hidden system folders
     ignore_dirs = {'.git', '.github', 'node_modules', 'venv', 'env', 'dist', 'build'}
-    return [
-        f for f in code_files 
-        if not any(part in ignore_dirs or part.startswith('.') for part in f.split(os.sep))
-    ]
+    current_script = os.path.basename(__file__)
+
+    for root, dirs, files in os.walk("."):
+        # Prune ignored directories in-place to optimize traversal
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith('.')]
+        
+        for file in files:
+            _, ext = os.path.splitext(file)
+            if ext in EXTENSIONS and file != current_script:
+                code_files.append(os.path.normpath(os.path.join(root, file)))
+                
+    return code_files
 
 def review_and_fix_file(filepath):
-    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"Error reading {filepath}: {e}")
+        return
 
     if not content.strip():
         return
@@ -37,17 +49,25 @@ CRITICAL REQUIREMENT: Output ONLY raw source code. Do NOT enclose your output in
 Original Code:
 {content}"""
 
-    response = client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=prompt,
-    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        corrected_code = response.text
+    except Exception as e:
+        print(f"Error calling Gemini API for {filepath}: {e}")
+        return
 
-    corrected_code = response.text.strip()
+    if not corrected_code:
+        return
+
+    corrected_code = corrected_code.strip()
     
     # Clean up residual backticks if returned
     if corrected_code.startswith("```"):
         lines = corrected_code.splitlines()
-        if lines[0].startswith("```"):
+        if lines and lines[0].startswith("```"):
             lines = lines[1:]
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
@@ -55,8 +75,11 @@ Original Code:
 
     if corrected_code and corrected_code != content.strip():
         print(f"[Gemini Fix Applied]: {filepath}")
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(corrected_code + "\n")
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(corrected_code + "\n")
+        except Exception as e:
+            print(f"Error writing to {filepath}: {e}")
 
 if __name__ == "__main__":
     files = get_code_files()
