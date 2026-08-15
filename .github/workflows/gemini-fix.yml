@@ -1,0 +1,38 @@
+name: Gemini Code Repair Automation
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  gemini-auto-repair:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Google GenAI SDK
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-genai
+
+      - name: Run Gemini Auto-Fix Engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python scripts/gemini_fixer.py
+
+      - name: Commit and Push Fixes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "fix(auto): repair code errors via Gemini"
+          branch: ${{ github.ref_name }}
